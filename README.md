@@ -8,7 +8,7 @@
 
 The GraphQL Federation specification is edited in the markdown files found in
 [`/spec`](./spec), the latest release of which is published at
-<https://graphql.github.io/composite-schemas-spec/>.
+<https://graphql.github.io/graphql-federation-spec/>.
 
 ## Contributing to this repo
 

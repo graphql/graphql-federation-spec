@@ -504,6 +504,112 @@ type Subscription {
 }
 ```
 
+### Validate Context Directives
+
+#### Context Name Invalid
+
+**Error Code**
+
+`CONTEXT_NAME_INVALID`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- Let {types} be the set of all object, interface, and union types in {schema}.
+- For each {type} in {types}:
+  - For each `@context` directive on {type}:
+    - Let {name} be the value of the `name` argument of the directive.
+    - {name} must start with a letter (`A` to `Z` or `a` to `z`).
+    - {name} must consist only of letters and digits (`0` to `9`).
+
+**Explanatory Text**
+
+A context name consists of letters and digits and starts with a letter. Unlike a
+GraphQL name, a context name must not contain an underscore. The underscore is
+reserved, so that an implementation can qualify a context name with the name of
+its source schema.
+
+**Examples**
+
+In the following example, the context name `userContext` satisfies the rule.
+
+```graphql example
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+}
+```
+
+In the following counter-example, the context name contains an underscore.
+
+```graphql counter-example
+type User @key(fields: "id") @context(name: "user_context") {
+  id: ID!
+}
+```
+
+In the following counter-example, the context name starts with a digit.
+
+```graphql counter-example
+type User @key(fields: "id") @context(name: "1user") {
+  id: ID!
+}
+```
+
+#### Context on Interface Object
+
+**Error Code**
+
+`CONTEXT_ON_INTERFACE_OBJECT`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- For each object type {type} in {schema}:
+  - If {type} is annotated with `@interfaceObject`:
+    - {type} must **not** be annotated with `@context`.
+
+**Explanatory Text**
+
+A type annotated with `@interfaceObject` is a stand-in for an interface that is
+defined in another source schema. It is not a type of the composite schema, and
+its values are values of the object types that implement the interface. A
+context is set by the values of a type of the composite schema. A stand-in must
+therefore not set a context.
+
+A source schema that defines the interface itself can annotate the interface
+with `@context`. The context is then set by the values of every implementing
+type.
+
+**Examples**
+
+In the following example, the interface `Media` sets the context. The rule is
+satisfied.
+
+```graphql example
+interface Media @key(fields: "id") @context(name: "media") {
+  id: ID!
+  language: String!
+}
+```
+
+In the following counter-example, the stand-in `Media` is annotated with
+`@context`.
+
+```graphql counter-example
+type Media @key(fields: "id") @interfaceObject @context(name: "media") {
+  id: ID!
+  language: String!
+}
+```
+
 ### Validate Internal Directives
 
 #### Internal Override Collision
@@ -1163,6 +1269,76 @@ type Query {
 
 type Product {
   id(scope: IdScope): ID!
+  name: String
+}
+```
+
+#### Is Fields Has Context Path
+
+**Error Code**
+
+`IS_FIELDS_HAS_CONTEXT_PATH`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- Let {compositeTypes} be the set of all composite types in {schema}.
+- For each {compositeType} in {compositeTypes}:
+  - Let {fields} be the set of fields on {compositeType}.
+  - For each {field} in {fields}:
+    - Let {arguments} be the set of arguments on {field}.
+    - For each {argument} in {arguments}:
+      - If {argument} is **not** annotated with `@is`:
+        - Continue
+      - Let {selectionMap} be the parsed selection map of the `field` argument
+        of the `@is` directive on {argument}.
+      - {selectionMap} must **not** contain a context path.
+
+**Explanatory Text**
+
+A context path reads from a value that lies above a field in a query. A lookup
+field is not resolved below such a value. The _distributed GraphQL executor_
+calls it with the key of an _entity_ that it already holds, and the `@is`
+directive maps each argument to a field of that _entity_. A context path is
+therefore only allowed in the selection map of `@require`.
+
+**Examples**
+
+In this example, the `id` argument is mapped to the `id` field of `Product`,
+satisfying the rule.
+
+```graphql example
+type Query {
+  productById(id: ID! @is(field: "id")): Product @lookup
+}
+
+type Product {
+  id: ID!
+  name: String
+}
+```
+
+In this counter-example, the `@is` selection map contains a context path,
+violating the rule.
+
+```graphql counter-example
+type Query {
+  productByTenant(
+    id: ID!
+    tenant: ID! @is(field: "$tenantContext.id")
+  ): Product @lookup
+}
+
+type Tenant @key(fields: "id") @context(name: "tenantContext") {
+  id: ID!
+}
+
+type Product {
+  id: ID!
   name: String
 }
 ```
@@ -3040,6 +3216,250 @@ type User implements Account @key(fields: "id") {
 type User @key(fields: "id") {
   id: ID!
   preferredLocale: String
+}
+```
+
+#### Require Context Not Set
+
+**Error Code**
+
+`REQUIRE_CONTEXT_NOT_SET`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- Let {contextNames} be the set of the `name` argument values of all `@context`
+  directives in {schema}.
+- Let {compositeTypes} be the set of all composite types in {schema}.
+- For each {composite} in {compositeTypes}:
+  - Let {fields} be the set of fields on {composite}.
+  - Let {arguments} be the set of all arguments on {fields}.
+  - For each {argument} in {arguments}:
+    - If {argument} is **not** annotated with `@require`:
+      - Continue
+    - Let {selectionMap} be the parsed selection map of the `field` argument of
+      the `@require` directive on {argument}.
+    - For each context path {contextPath} in {selectionMap}:
+      - Let {contextName} be the context name of {contextPath}.
+      - {contextName} must be in {contextNames}.
+
+**Explanatory Text**
+
+A context path names a context. The context must be set by at least one type in
+the source schema that declares the requirement. A context that is set only in
+another source schema is not visible: context names are local to a source
+schema, and two source schemas can use the same name for different contexts.
+
+The fields that a context path selects are not bound to the source schema. They
+are validated against the composite schema (see
+[Require Invalid Fields](#sec-Require-Invalid-Fields)).
+
+**Examples**
+
+In the following example, `User` sets `userContext` in the same source schema,
+satisfying the rule.
+
+```graphql example
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  locale: String!
+  orders: [Order!]!
+}
+
+type Order @key(fields: "id") {
+  id: ID!
+  summary(locale: String! @require(field: "$userContext.locale")): String!
+}
+```
+
+In the following counter-example, no type in the source schema sets
+`userContext`.
+
+```graphql counter-example
+type User @key(fields: "id") {
+  id: ID!
+  locale: String!
+  orders: [Order!]!
+}
+
+type Order @key(fields: "id") {
+  id: ID!
+  summary(locale: String! @require(field: "$userContext.locale")): String!
+}
+```
+
+#### Require Context on Interface
+
+**Error Code**
+
+`REQUIRE_CONTEXT_ON_INTERFACE`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- For each interface type {interface} in {schema}:
+  - For each {field} on {interface}:
+    - For each {argument} on {field}:
+      - If {argument} is annotated with `@require`:
+        - The selection map of the `@require` directive on {argument} must
+          **not** contain a context path.
+- For each object type {type} in {schema}:
+  - Let {interfaces} be the set of interface types that {type} implements.
+  - For each {field} on {type}:
+    - If no interface in {interfaces} declares a field with the name of {field}:
+      - Continue
+    - For each {argument} on {field}:
+      - If {argument} is annotated with `@require`:
+        - The selection map of the `@require` directive on {argument} must
+          **not** contain a context path.
+
+**Explanatory Text**
+
+A requirement that contains a context path must be declared on a field of an
+object type, and this field must not implement an interface field. The second
+part applies even when the interface field does not declare the argument.
+
+A field that is selected through an interface is resolved by the field of the
+concrete object type. Each implementing field could read from a different
+context, or from a different path of the same context. This specification does
+not define how the requirement of an interface field and the requirements of its
+implementing fields relate when they read from a context, so the combination is
+not allowed.
+
+A requirement without a context path can still be declared on an interface field
+(see
+[Require Inconsistent on Implementation](#sec-Require-Inconsistent-on-Implementation)).
+
+**Examples**
+
+In the following example, the requirement is declared on a field of an object
+type that does not implement an interface field, satisfying the rule.
+
+```graphql example
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  locale: String!
+  orders: [Order!]!
+}
+
+type Order @key(fields: "id") {
+  id: ID!
+  summary(locale: String! @require(field: "$userContext.locale")): String!
+}
+```
+
+In the following counter-example, the requirement is declared on an interface
+field.
+
+```graphql counter-example
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  locale: String!
+  documents: [Document!]!
+}
+
+interface Document {
+  id: ID!
+  summary(locale: String! @require(field: "$userContext.locale")): String!
+}
+```
+
+In the following counter-example, `Order.summary` implements the interface field
+`Document.summary`. The rule is violated although `Document.summary` does not
+declare the `locale` argument.
+
+```graphql counter-example
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  locale: String!
+  documents: [Document!]!
+}
+
+interface Document {
+  id: ID!
+  summary: String!
+}
+
+type Order implements Document @key(fields: "id") {
+  id: ID!
+  summary(locale: String @require(field: "$userContext.locale")): String!
+}
+```
+
+#### Require Context Default Value
+
+**Error Code**
+
+`REQUIRE_CONTEXT_DEFAULT_VALUE`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- Let {compositeTypes} be the set of all composite types in {schema}.
+- For each {composite} in {compositeTypes}:
+  - Let {fields} be the set of fields on {composite}.
+  - Let {arguments} be the set of all arguments on {fields}.
+  - For each {argument} in {arguments}:
+    - If {argument} is **not** annotated with `@require`:
+      - Continue
+    - Let {selectionMap} be the parsed selection map of the `field` argument of
+      the `@require` directive on {argument}.
+    - If {selectionMap} contains a context path:
+      - {argument} must **not** have a default value.
+
+**Explanatory Text**
+
+An argument whose requirement reads from a context is always supplied by the
+_distributed GraphQL executor_. A default value would never be used. It would
+also suggest a fallback for a query in which the context is not set, and no such
+fallback exists: a query path on which the context is not set makes the
+composite schema unsatisfiable (see
+[Validate Satisfiability](#sec-Validate-Satisfiability)).
+
+**Examples**
+
+In the following example, the `locale` argument has no default value, satisfying
+the rule.
+
+```graphql example
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  locale: String!
+  orders: [Order!]!
+}
+
+type Order @key(fields: "id") {
+  id: ID!
+  summary(locale: String! @require(field: "$userContext.locale")): String!
+}
+```
+
+In the following counter-example, the `locale` argument has a default value.
+
+```graphql counter-example
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  locale: String!
+  orders: [Order!]!
+}
+
+type Order @key(fields: "id") {
+  id: ID!
+  summary(
+    locale: String! = "en" @require(field: "$userContext.locale")
+  ): String!
 }
 ```
 
@@ -8815,7 +9235,17 @@ ERROR
         resolved across this combined schema context. Individual fields in the
         selection may exist in different schemas; it is not required that all
         fields referenced by {parsedFieldArg} reside within a single schema.
-    - Let {rootFields} be the root field selections in {parsedFieldArg}.
+    - For each context path {contextPath} in {parsedFieldArg}:
+      - Let {contextName} be the context name of {contextPath}.
+      - Let {contextTypes} be the set of types in {schema} that are annotated
+        with `@context` and the name {contextName}.
+      - {contextPath} is not rooted at {declaringType}. It must satisfy
+        [Context Path Roots](#sec-Context-Path-Roots) with {contextTypes} as the
+        types that set the context.
+      - The schema context of {contextPath} is the union of all {schemas},
+        including {schema}, except all fields marked as `@internal`.
+    - Let {rootFields} be the root field selections in {parsedFieldArg} that do
+      not belong to a context path.
     - For each {rootField} in {rootFields}:
       - {declaringType} in {schema} must not already declare {rootField} itself:
         a declared field that is not `@external` or `@internal` and is not
@@ -8892,6 +9322,54 @@ type Book {
 }
 ```
 
+A context path is validated differently. It is rooted at the types that set its
+context in the source schema that declares the requirement, and it may select
+fields that this source schema declares itself. In the following example, the
+path `userCurrency.isoCode` is valid for `User`, satisfying the rule.
+
+```graphql example
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  userCurrency: Currency!
+  transactions: [Transaction!]!
+}
+
+type Currency {
+  isoCode: String!
+}
+
+type Transaction @key(fields: "id") {
+  id: ID!
+  amount(
+    currency: String! @require(field: "$userContext.userCurrency.isoCode")
+  ): Int!
+}
+```
+
+In the following counter-example, `User` and `Organization` set the context
+`account`, but `Organization` has no field `locale`. The context path is not
+valid for every type that sets the context, causing a `REQUIRE_INVALID_FIELDS`
+error.
+
+```graphql counter-example
+type User @key(fields: "id") @context(name: "account") {
+  id: ID!
+  locale: String!
+  invoices: [Invoice!]!
+}
+
+type Organization @key(fields: "id") @context(name: "account") {
+  id: ID!
+  defaultLocale: String!
+  invoices: [Invoice!]!
+}
+
+type Invoice @key(fields: "id") {
+  id: ID!
+  summary(locale: String! @require(field: "$account.locale")): String!
+}
+```
+
 The `@require` directive may also reference fields with arguments. In the
 following example, the `weight` argument is required from the `weight` output
 field selected with a constant `unit` argument:
@@ -8958,21 +9436,32 @@ metadata; retaining an identity does not expose a type or project its fields
 into the client schema. Possible-type and implements comparisons in the helpers
 below use this graph unless explicitly scoped to a source schema.
 
+A _context scope_ records which values a context path can be rooted at. It is a
+map from ({sourceSchema}, {contextName}) pairs to sets of execution contexts.
+For a value on a query path, the entry for ({sourceSchema}, {contextName}) holds
+the execution contexts of the nearest value above it whose type sets
+{contextName} with `@context` in {sourceSchema}. A value is never part of its
+own context scope.
+
 - Let {schema} be the merged composite execution schema.
 - Let {sourceSchemas} be the set of source schemas used to compose {schema}.
 - Let {operationRootTypes} be the operation root types defined in {schema}.
-- Let {pending} and {visited} be empty sets of ({type}, {contexts}) pairs.
+- Let {pending} and {visited} be empty sets of ({type}, {contexts}, {scope})
+  triples.
 - For each {rootType} in {operationRootTypes}:
   - Let {contexts} be the set of ({sourceSchema}, {localRootType}, {rootType})
     tuples for source schemas defining the corresponding {localRootType}.
-  - Add ({rootType}, {contexts}) to {pending}.
+  - Add ({rootType}, {contexts}, {scope}) to {pending}, where {scope} is an
+    empty context scope.
 - While {pending} is not empty:
-  - Remove a pair ({type}, {contexts}) from {pending}.
-  - If ({type}, {contexts}) is in {visited}:
-    - Continue to the next pair.
-  - Add ({type}, {contexts}) to {visited}.
+  - Remove a triple ({type}, {contexts}, {scope}) from {pending}.
+  - If ({type}, {contexts}, {scope}) is in {visited}:
+    - Continue to the next triple.
+  - Add ({type}, {contexts}, {scope}) to {visited}.
+  - Let {childScope} be `ExtendContextScope(scope, type, contexts)`.
   - For each client-accessible field {field} on {type}:
-    - Let {owners} be `ResolveField(contexts, type, field, sourceSchemas, {})`.
+    - Let {owners} be
+      `ResolveField(contexts, type, field, sourceSchemas, scope, {})`.
     - Let {usableOwners} and {returnContexts} be empty sets.
     - For each {owner} in {owners}:
       - Let {values} be `FieldValueContexts(owner, field, schema)`.
@@ -8994,15 +9483,38 @@ below use this graph unless explicitly scoped to a source schema.
     - For each distinct client-accessible {valueType} in {returnContexts}:
       - Let {nextContexts} be the contexts in {returnContexts} whose {valueType}
         is {valueType}.
-      - Add ({valueType}, {nextContexts}) to {pending}.
+      - Add ({valueType}, {nextContexts}, {childScope}) to {pending}.
 
 The worklist represents executable query-path continuations. Record a witness
-path for each pair for diagnostics. Equal pairs need only be checked once;
-recursive fields that change the available contexts produce a different pair and
-must be checked. The source schemas and types are finite, so the set of possible
-pairs is finite. Scalar and enum fields produce no return contexts. Client
-selection of `__typename` is satisfied by a known concrete identity; opaque
-values must recover that identity even when no ordinary field is selected.
+path for each triple for diagnostics. Equal triples need only be checked once;
+recursive fields that change the available contexts or the context scope produce
+a different triple and must be checked. The source schemas, types, and context
+names are finite, so the set of possible triples is finite. Scalar and enum
+fields produce no return contexts. Client selection of `__typename` is satisfied
+by a known concrete identity; opaque values must recover that identity even when
+no ordinary field is selected.
+
+ExtendContextScope(scope, type, contexts):
+
+Returns the context scope of the values that the fields of a value of {type}
+produce. Every context that {type} sets, in any source schema, replaces an
+earlier entry for the same source schema and context name, so the nearest value
+is the one that is used.
+
+- Let {result} be a copy of {scope}.
+- For each {sourceSchema} in {sourceSchemas}:
+  - For each type {localType} in {sourceSchema} that is annotated with
+    `@context`:
+    - If {localType} does not have the name of {type}, {type} does not implement
+      an interface with the name of {localType} in the execution type graph, and
+      {type} is not a member type of a union with the name of {localType} in any
+      source schema:
+      - Continue to the next {localType}.
+    - For each `@context` directive on {localType}:
+      - Let {contextName} be the value of its `name` argument.
+      - Set the entry for ({sourceSchema}, {contextName}) in {result} to
+        {contexts}.
+- Return {result}.
 
 FieldOwnerOptions(type, field, candidateSchemas):
 
@@ -9029,11 +9541,12 @@ schema and local parent type.
       - Add ({sourceSchema}, {localType}) to {options}.
 - Return {options}.
 
-ResolveField(contexts, type, field, candidateSchemas, activeGoals):
+ResolveField(contexts, type, field, candidateSchemas, scope, activeGoals):
 
 Resolve a field without discarding the context in which its parent value is
 available. Selecting a field directly requires both the source schema and the
-schema-local parent type to match its owner.
+schema-local parent type to match its owner. {scope} is the context scope of the
+parent value.
 
 - Let {results} be an empty set.
 - Let {ownerOptions} be `FieldOwnerOptions(type, field, candidateSchemas)`.
@@ -9046,7 +9559,7 @@ schema-local parent type to match its owner.
         according to `FieldOwnerOptions` for its {valueType}:
         - Continue to the next {entry}.
       - If
-        `ResolveRequirements(context, entry, field, candidateSchemas, activeGoals)`
+        `ResolveRequirements(context, entry, field, candidateSchemas, scope, activeGoals)`
         is true:
         - Add {entry} to {results}.
 - Return {results}.
@@ -9113,12 +9626,34 @@ names; source-local and composite type definitions are distinct objects.
   - Return the set containing ({targetSchema}, {targetType}, {valueType}).
 - Return an empty set.
 
-ResolveRequirements(context, owner, field, candidateSchemas, activeGoals):
+EnterByLookup(context, activeGoals):
+
+Determine whether the current value can be entered again, in its own source
+schema and local type, through a lookup. Unlike {EnterType}, the current
+location itself does not count.
+
+- Let {targetSchema} and {targetType} be the {sourceSchema} and {localType} of
+  {context}.
+- For each field {lookup} in {targetSchema} annotated with `@lookup`:
+  - If `LookupResultContexts(context, lookup, targetType)` is empty:
+    - Continue to the next {lookup}.
+  - If `LookupInputsResolvable(lookup, context, activeGoals)` is true:
+    - Return true.
+- Return false.
+
+ResolveRequirements(context, owner, field, candidateSchemas, scope,
+activeGoals):
 
 Each `@require` argument on the owner's local field must be supplied from
 schemas other than the schema declaring that requirement. This exclusion applies
 to that dependency's owners. A nested requirement establishes its own owner
 exclusion; earlier exclusions do not accumulate across independent fields.
+
+A context path is supplied from the value that {scope} records for its context
+name in the schema declaring the requirement. The owner exclusion does not apply
+to a context path. The value that sets the context is fetched before the field
+is resolved, so the owner's local type must be entered through a lookup after
+that.
 
 - Let {targetSchema} and {targetType} be the {sourceSchema} and {localType} of
   {owner}.
@@ -9134,8 +9669,18 @@ exclusion; earlier exclusions do not accumulate across independent fields.
 - For each {requiredArgument} in {requiredArguments}:
   - Let {fieldSelectionMap} be the `field` argument value of `@require` on
     {requiredArgument}.
+  - Let {contextRoots} be an empty map from context names to sets of execution
+    contexts.
+  - For each {contextName} named by a context path in {fieldSelectionMap}:
+    - If {scope} has no entry for ({targetSchema}, {contextName}):
+      - Return false.
+    - Set the entry for {contextName} in {contextRoots} to the entry for
+      ({targetSchema}, {contextName}) in {scope}.
+  - If {contextRoots} is not empty and {owner} is {context}:
+    - If `EnterByLookup(context, nextGoals)` is false:
+      - Return false.
   - If
-    `SelectionMapResolvable(fieldSelectionMap, targetType, requiredArgument, context, allowedSchemas, nextGoals)`
+    `SelectionMapResolvable(fieldSelectionMap, targetType, requiredArgument, context, contextRoots, allowedSchemas, nextGoals)`
     is false:
     - Return false.
 - Return true.
@@ -9144,7 +9689,8 @@ LookupInputsResolvable(lookup, context, activeGoals):
 
 Every lookup argument must be constructible from the current value. Its map is
 validated against the lookup's local return type, while execution starts from
-{context}. Routing inputs may use every source schema.
+{context}. Routing inputs may use every source schema. A lookup map contains no
+context paths, so it is evaluated without context roots.
 
 - Let {rootType} be the unwrapped return type of {lookup}.
 - For each {argument} on {lookup}:
@@ -9153,13 +9699,13 @@ validated against the lookup's local return type, while execution starts from
   - Otherwise:
     - Let {fieldSelectionMap} be the name of {argument}.
   - If
-    `SelectionMapResolvable(fieldSelectionMap, rootType, argument, context, sourceSchemas, activeGoals)`
+    `SelectionMapResolvable(fieldSelectionMap, rootType, argument, context, {}, sourceSchemas, activeGoals)`
     is false:
     - Return false.
 - Return true.
 
 SelectionMapResolvable(fieldSelectionMap, rootType, argument, context,
-candidateSchemas, activeGoals):
+contextRoots, candidateSchemas, activeGoals):
 
 Evaluate the complete map, retaining its type-conditioned alternatives. A lookup
 or requirement map is declared against its destination type, but its first
@@ -9175,8 +9721,16 @@ example, `Media.id` in a stand-in lookup's map selects `Book.id` from a native
   - The type conditions governing each alternative and its required paths.
   - The input-object and list structure, expected input types, and any outcomes
     permitted by the existing mapping and input-coercion rules.
+  - For each context path, its context name. A context path is not rooted at
+    {rootType}.
 - Let {state} contain {cases}, with the empty output-path prefix available in
   the set containing {context}, and no other paths yet selected.
+- For each {contextName} with an entry in {contextRoots}:
+  - Add a _context root_ for {contextName} to {state}: a separate empty
+    output-path prefix that is available in the execution contexts of that
+    entry. A context path that names {contextName} selects its fields from this
+    prefix, and a type condition that follows the context name is evaluated at
+    this prefix.
 - Return `ResolveSelectionCases(state, candidateSchemas, activeGoals)`, as
   defined in [Resolve Selection Cases](#sec-Resolve-Selection-Cases).
 
@@ -9187,8 +9741,12 @@ when another declaration owns the same composite field. This is a local input
 capability, not an additional projected owner or a reason to enter that stand-in
 from another context.
 
+Dependency inputs are resolved with an empty context scope. A field whose
+requirement contains a context path therefore never supplies a dependency input.
+
+- Let {scope} be an empty context scope.
 - Let {results} be
-  `ResolveField(contexts, type, field, candidateSchemas, activeGoals)`.
+  `ResolveField(contexts, type, field, candidateSchemas, scope, activeGoals)`.
 - For each {context} in {contexts}:
   - Let {sourceSchema} and {localType} be its source schema and local parent.
   - If {sourceSchema} is not in {candidateSchemas}, or {localType} is not a
@@ -9197,7 +9755,7 @@ from another context.
   - If {field} is selected by a `@key` on {localType}, its local declaration is
     not annotated with `@external` or `@internal`:
     - If
-      `ResolveRequirements(context, context, field, candidateSchemas, activeGoals)`
+      `ResolveRequirements(context, context, field, candidateSchemas, scope, activeGoals)`
       is true:
       - Add {context} to {results}.
 - Return {results}.
@@ -9286,6 +9844,31 @@ selects an owner before considering its possible returned identities, and each
 identity must have a complete applicable mapping. Different identities may use
 different alternatives of the same map. If a required runtime case has no
 executable mapping, that owner cannot supply the input.
+
+A requirement may contain context paths. The worklist therefore carries a
+context scope along each query path. When the path moves from a value to the
+values of one of its fields, every context that the type of that value sets is
+recorded for the values below. A type sets a context when a source schema
+annotates it with `@context`, or annotates an interface that it implements or a
+union that it is a member of. A nearer value replaces a more distant one, and
+the value on which a field is selected is never the root of that field's own
+context paths.
+
+A field whose requirement contains a context path is usable only under three
+conditions. First, the context scope must have an entry for every context name
+that the requirement uses, set by a type of the source schema that declares the
+requirement. A query path that reaches the field without passing through such a
+value has no usable owner for the field. Second, the fields that the context
+path selects must be resolvable from that value. Any source schema may supply
+them, including the one that declares the requirement. Third, the value that
+sets the context is fetched before the field can be resolved, so the field is
+resolved in a later request to its source schema. When the parent value was
+produced by that source schema, a lookup must be able to enter the parent type
+again.
+
+Context paths are resolved only for fields that a client selects. Inside a
+lookup input or another requirement, a field whose requirement contains a
+context path is not a candidate owner.
 
 If every candidate is eliminated for any field path, the path is unsatisfiable
 and composition fails with `UNSATISFIABLE_QUERY_PATH`.
@@ -9760,6 +10343,8 @@ ResolveSelectionCases(state, candidateSchemas, activeGoals):
       {valueType}.
     - Obtain owner alternatives from
       `ResolveInputField(contexts, type, field, candidateSchemas, activeGoals)`.
+      For a prefix that descends from a context root, use {sourceSchemas} in
+      place of {candidateSchemas}.
     - Each owner whose {valueType} is {type} and whose local field accepts the
       selected literal arguments is a separate action.
   - To evaluate a pending type condition on an opaque prefix, or establish

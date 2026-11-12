@@ -437,8 +437,14 @@ Is equivalent to the {Name} defined in the
 
 Path ::
 
+- ContextReference . PathSegment
+- ContextReference < TypeName > . PathSegment
 - < TypeName > . PathSegment
 - PathSegment
+
+ContextReference ::
+
+- $ ContextName
 
 PathSegment ::
 
@@ -451,6 +457,10 @@ FieldName ::
 - Name
 
 TypeName ::
+
+- Name
+
+ContextName ::
 
 - Name
 
@@ -505,6 +515,30 @@ In the following example, the path `mediaById<Book>.isbn` specifies that
 
 ```graphql example
 mediaById<Book>.isbn
+```
+
+A {Path} that starts with a {ContextReference} is a _context path_. It is not
+rooted at the type determined by the directive. It is rooted at the nearest
+value above the annotated field in the query whose type sets the context named
+by {ContextName} (see `@context`). The value that the annotated field is
+selected on is not considered. A context path is only permitted in the selection
+map of the `@require` directive.
+
+```graphql example
+$userContext.userCurrency.isoCode
+```
+
+If more than one type sets the context, a type name in angle brackets after the
+{ContextReference} restricts the path to values of that type.
+
+```graphql example
+$account<User>.locale | $account<Organization>.defaultLocale
+```
+
+Context paths and other paths can be combined in one {SelectedValue}.
+
+```graphql example
+{ currency: $userContext.userCurrency.isoCode, rate: exchange.rate }
 ```
 
 #### SelectedValue
@@ -1006,6 +1040,88 @@ GetPossibleTypes(type):
 Type references inside a {Path} must be valid within the context of the
 surrounding type. A type reference is only valid if the referenced type could
 logically apply within the parent type.
+
+#### Context Path Roots
+
+A context path must be valid for the types that set its context.
+
+**Formal Specification**
+
+- For each {Path} that starts with a {ContextReference}:
+  - Let {contextName} be the {ContextName} of the {ContextReference}.
+  - Let {contextTypes} be the set of types that are annotated with `@context`
+    and the name {contextName} in the source schema that declares the
+    {FieldSelectionMap}.
+  - {contextTypes} must not be empty.
+  - If a type reference follows the {ContextReference}:
+    - Let {type} be the type referenced.
+    - {type} must be an object type.
+    - {type} must be a type in {contextTypes}, implement an interface in
+      {contextTypes}, or be a member type of a union in {contextTypes}.
+    - The remaining segments of the {Path} must be valid with {type} as the
+      current type in scope.
+  - Otherwise:
+    - For each {contextType} in {contextTypes}:
+      - The remaining segments of the {Path} must be valid with {contextType} as
+        the current type in scope.
+
+**Explanatory Text**
+
+The first segment of a context path does not select a field of the type that the
+directive determines. It selects a field of a type that sets the context. Which
+value sets the context depends on the query, so a context path must be valid for
+every type that sets the context.
+
+In the following example, only `User` sets `userContext`. The {Path} is valid
+because `locale` is a field of `User`.
+
+```graphql example
+type User @context(name: "userContext") {
+  id: ID!
+  locale: String!
+}
+```
+
+```graphql example
+$userContext.locale
+```
+
+If more than one type sets the context, a {Path} without a type reference must
+be valid for each of them. In the following example, `User` and `Organization`
+set `account`.
+
+```graphql example
+type User @context(name: "account") {
+  id: ID!
+  locale: String!
+}
+
+type Organization @context(name: "account") {
+  id: ID!
+  defaultLocale: String!
+}
+```
+
+The following {Path} is invalid because `locale` is not a field of
+`Organization`.
+
+```graphql counter-example
+$account.locale
+```
+
+A type reference restricts a context path to one object type. The following
+{SelectedValue} is valid because each alternative is valid for the type that it
+references.
+
+```graphql example
+$account<User>.locale | $account<Organization>.defaultLocale
+```
+
+The following {Path} is invalid because `Invoice` does not set `account`.
+
+```graphql counter-example
+$account<Invoice>.locale
+```
 
 #### Values of Correct Type
 

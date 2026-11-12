@@ -692,6 +692,47 @@ type Product @key(fields: "id") {
 }
 ```
 
+A selection map can also read from a _context_. A path that starts with `$` and
+a context name is not rooted at the type that declares the field. It is rooted
+at the nearest value above the field in the query that sets this context (see
+`@context`).
+
+```graphql example
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  transactions: [Transaction!]!
+}
+
+type Transaction @key(fields: "id") {
+  id: ID!
+  amount(
+    currency: String! @require(field: "$userContext.userCurrency.isoCode")
+  ): Int!
+}
+```
+
+Context paths and paths rooted at the declaring type can be combined in one
+selection map. In the following example, `currency` is read from the user that
+the transaction was reached through, and `rate` is read from the transaction
+itself.
+
+```graphql example
+type Transaction @key(fields: "id") {
+  id: ID!
+  amount(
+    conversion: ConversionInput!
+      @require(
+        field: "{ currency: $userContext.userCurrency.isoCode, rate: exchange.rate }"
+      )
+  ): Int!
+}
+
+input ConversionInput {
+  currency: String!
+  rate: Float!
+}
+```
+
 The `@require` directive must not be used on arguments of fields annotated with
 `@lookup`. The arguments of a lookup field represent the stable key with which
 the _distributed executor_ resolves an entity; they are supplied from an
@@ -701,6 +742,258 @@ in that position.
 **Arguments:**
 
 - `field`: Represents a selection path map syntax.
+
+## @context
+
+```graphql
+directive @context(name: String!) repeatable on OBJECT | INTERFACE | UNION
+```
+
+The `@context` directive declares that the values of a type set a named
+_context_. A context makes the data of such a value available to every field
+that is resolved below it in a query, without the client passing that data down.
+
+A field reads from a context through an argument annotated with `@require`. A
+path in the selection map that starts with `$` and the context name is rooted at
+the value that sets the context.
+
+```graphql example
+type Query {
+  me: User
+  transactionById(id: ID!): Transaction @lookup
+}
+
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  userCurrency: Currency!
+  transactions: [Transaction!]!
+}
+
+type Currency {
+  isoCode: String!
+}
+
+type Transaction @key(fields: "id") {
+  id: ID!
+  amount(
+    currency: String! @require(field: "$userContext.userCurrency.isoCode")
+  ): Int!
+}
+```
+
+Like every argument annotated with `@require`, `currency` is removed from the
+_composite schema_ and supplied by the _distributed executor_.
+
+```graphql example
+type Transaction {
+  id: ID!
+  amount: Int!
+}
+```
+
+For the following query, the _distributed executor_ resolves `amount` for each
+transaction with the `isoCode` of the currency of the user returned by `me`.
+
+```graphql example
+query {
+  me {
+    transactions {
+      amount
+    }
+  }
+}
+```
+
+To find the value that a context path is rooted at, the _distributed executor_
+walks up the query towards the root and takes the first value whose type sets
+the context. The walk starts above the value that the field is selected on: in
+the example, the `Transaction` itself is not considered. If several values above
+the field set the same context, the nearest one is used.
+
+A type sets a context when it is annotated with `@context`, when it implements
+an interface that is annotated with `@context`, or when it is a member type of a
+union that is annotated with `@context`.
+
+The fields selected by a context path do not have to be selected by the client.
+Any source schema can supply them, including the source schema that declares the
+requirement.
+
+A context name consists of letters and digits and starts with a letter. In the
+following counter-example, the context name contains an underscore.
+
+```graphql counter-example
+type User @key(fields: "id") @context(name: "user_context") {
+  id: ID!
+}
+```
+
+A context path must name a context that is set by a type in the same source
+schema. In the following counter-example, no type in the source schema sets
+`userContext`.
+
+```graphql counter-example
+type Transaction @key(fields: "id") {
+  id: ID!
+  amount(
+    currency: String! @require(field: "$userContext.userCurrency.isoCode")
+  ): Int!
+}
+```
+
+Every query that can reach a field with a context requirement must pass through
+a value that sets the context. In the following counter-example, `Query.latest`
+returns transactions that were not reached through a `User`, so `userContext` is
+not set for `amount`.
+
+```graphql counter-example
+type Query {
+  me: User
+  latest: [Transaction!]!
+  transactionById(id: ID!): Transaction @lookup
+}
+
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  userCurrency: Currency!
+  transactions: [Transaction!]!
+}
+
+type Currency {
+  isoCode: String!
+}
+
+type Transaction @key(fields: "id") {
+  id: ID!
+  amount(
+    currency: String! @require(field: "$userContext.userCurrency.isoCode")
+  ): Int!
+}
+```
+
+The _distributed executor_ fetches the value of a context path first and then
+resolves the field in a further request to its source schema. This source schema
+must therefore provide a lookup for the type that declares the field. In the
+following counter-example, the source schema has no lookup for `Transaction`.
+
+```graphql counter-example
+type Query {
+  me: User
+}
+
+type User @key(fields: "id") @context(name: "userContext") {
+  id: ID!
+  userCurrency: Currency!
+  transactions: [Transaction!]!
+}
+
+type Currency {
+  isoCode: String!
+}
+
+type Transaction @key(fields: "id") {
+  id: ID!
+  amount(
+    currency: String! @require(field: "$userContext.userCurrency.isoCode")
+  ): Int!
+}
+```
+
+A requirement with a context path must be declared on a field of an object type.
+It must not be declared on a field of an interface. In the following
+counter-example, the requirement is declared on the interface field
+`Document.summary`.
+
+```graphql counter-example
+interface Document {
+  id: ID!
+  summary(locale: String! @require(field: "$userContext.locale")): String!
+}
+```
+
+The field must also not implement an interface field, even when the interface
+field does not declare the argument. In the following counter-example,
+`Order.summary` implements `Document.summary`.
+
+```graphql counter-example
+interface Document {
+  id: ID!
+  summary: String!
+}
+
+type Order implements Document @key(fields: "id") {
+  id: ID!
+  summary(locale: String @require(field: "$userContext.locale")): String!
+}
+```
+
+An argument that reads from a context must not have a default value. The
+_distributed executor_ always supplies the argument, and there is no fallback
+for a query in which the context is not set. In the following counter-example,
+`locale` has a default value.
+
+```graphql counter-example
+type Order @key(fields: "id") {
+  id: ID!
+  summary(
+    locale: String! = "en" @require(field: "$userContext.locale")
+  ): String!
+}
+```
+
+A type annotated with `@interfaceObject` must not set a context. In the
+following counter-example, the stand-in `Media` is annotated with `@context`.
+
+```graphql counter-example
+type Media @key(fields: "id") @interfaceObject @context(name: "media") {
+  id: ID!
+  language: String!
+}
+```
+
+A context path is only allowed in the selection map of `@require`. In the
+following counter-example, the `@is` directive of a lookup uses a context path.
+
+```graphql counter-example
+type Query {
+  productByTenant(
+    id: ID!
+    tenant: ID! @is(field: "$tenantContext.id")
+  ): Product @lookup
+}
+```
+
+The same context can be set by more than one type. A context path must then be
+valid for each of these types. If the types do not share the selected fields,
+the selection map names the type after the context name and lists one
+alternative for each type.
+
+```graphql example
+type User @key(fields: "id") @context(name: "account") {
+  id: ID!
+  locale: String!
+  invoices: [Invoice!]!
+}
+
+type Organization @key(fields: "id") @context(name: "account") {
+  id: ID!
+  defaultLocale: String!
+  invoices: [Invoice!]!
+}
+
+type Invoice @key(fields: "id") {
+  id: ID!
+  summary(
+    locale: String!
+      @require(
+        field: "$account<User>.locale | $account<Organization>.defaultLocale"
+      )
+  ): String!
+}
+```
+
+**Arguments:**
+
+- `name`: The name of the context that the annotated type sets.
 
 ## @key
 

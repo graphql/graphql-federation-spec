@@ -854,6 +854,10 @@ type Review {
 Composition adds each stand-in field that is not part of a key to the interface
 and projects its implementation onto every type that implements the interface.
 
+A projected field behaves as if the stand-in's source schema declared it on each
+implementing type. It has the same arguments and the same directives on the
+field and its arguments, including directives.
+
 In the following example, composition projects the implementation of `reviews`
 from the `Media` stand-in onto `Book`, although no source schema declares the
 field directly on `Book`.
@@ -873,7 +877,7 @@ type Book implements Media @key(fields: "id") {
 # Source Schema B
 type Media @interfaceObject @key(fields: "id") {
   id: ID!
-  reviews: [Review!]!
+  reviews: [Review!]! @custom
 }
 
 type Review {
@@ -884,13 +888,13 @@ type Review {
 interface Media {
   id: ID!
   title: String!
-  reviews: [Review!]!
+  reviews: [Review!]! @custom
 }
 
 type Book implements Media {
   id: ID!
   title: String!
-  reviews: [Review!]!
+  reviews: [Review!]! @custom
 }
 
 type Review {
@@ -898,14 +902,15 @@ type Review {
 }
 ```
 
-A stand-in must declare a `@key` that matches one of the keys declared on the
-interface.
+A stand-in must declare at least one `@key`, and each `@key` on the stand-in
+must select the same fields as one of the keys declared on the interface.
 
-A stand-in is not required to declare a lookup field. Without one, each non-key
-field must either be `@shareable` with another effective owner reachable from
-every context that needs the field, or be replaced with `@implement` on every
-implementing type. A stand-in that declares only key fields serves as a typed
-reference to the entity.
+A stand-in is not required to declare a lookup field. Without one, the
+_distributed GraphQL executor_ cannot enter the stand-in from values resolved in
+other source schemas. Composition then fails unless every path that needs a
+non-key field of the stand-in can resolve it locally in the stand-in's source
+schema or through another `@shareable` declaration of the field. A stand-in that
+declares only key fields serves as a typed reference to the entity.
 
 ```graphql example
 # Source Schema A
@@ -930,6 +935,135 @@ interface Media @key(fields: "id") {
 
 type Book implements Media {
   id: ID!
+}
+```
+
+A source schema sees an entity either through a stand-in or through its concrete
+type, but not both. Each projected field also comes from the stand-ins of
+exactly one interface. The following restrictions ensure this.
+
+A stand-in already contributes its fields to every type that implements its
+interface. A source schema that declares a stand-in must therefore not define
+any of those types. This applies even if the source schema's definition of the
+type does not declare the interface. In the following counter-example, source
+schema B declares a stand-in for `Media` and also defines `Book`, which
+implements `Media` in the composite schema.
+
+```graphql counter-example
+# Source Schema A
+interface Media @key(fields: "id") {
+  id: ID!
+  title: String!
+}
+
+type Book implements Media @key(fields: "id") {
+  id: ID!
+  title: String!
+}
+
+# Source Schema B
+type Media @interfaceObject @key(fields: "id") {
+  id: ID!
+  rating: Int
+}
+
+type Book @key(fields: "id") {
+  id: ID!
+  reviewCount: Int
+}
+```
+
+Source schema B can instead contribute `reviewCount` through the stand-in, which
+adds it to every type that implements `Media`. Alternatively, another source
+schema can declare `reviewCount` on `Book`.
+
+An interface that has a stand-in must not be implemented by another interface.
+The interface itself may implement other interfaces. In the following
+counter-example, source schema B declares a stand-in for `Media`, but the
+interface `PrintMedia` implements `Media`.
+
+```graphql counter-example
+# Source Schema A
+interface Media @key(fields: "id") {
+  id: ID!
+}
+
+interface PrintMedia implements Media @key(fields: "id") {
+  id: ID!
+}
+
+type Book implements PrintMedia & Media @key(fields: "id") {
+  id: ID!
+}
+
+# Source Schema B
+type Media @interfaceObject @key(fields: "id") {
+  id: ID!
+  rating: Int
+}
+```
+
+Two stand-ins in the same source schema must not stand in for interfaces that
+share an implementing type. Otherwise, the source schema would have two local
+types for the same entity. In the following counter-example, source schema B
+declares stand-ins for `Media` and `Sellable`, and `Book` implements both.
+
+```graphql counter-example
+# Source Schema A
+interface Media @key(fields: "id") {
+  id: ID!
+}
+
+interface Sellable @key(fields: "id") {
+  id: ID!
+}
+
+type Book implements Media & Sellable @key(fields: "id") {
+  id: ID!
+}
+
+# Source Schema B
+type Media @interfaceObject @key(fields: "id") {
+  id: ID!
+  rating: Int
+}
+
+type Sellable @interfaceObject @key(fields: "id") {
+  id: ID!
+  price: Float
+}
+```
+
+A field of an object type must not be projected from stand-ins for more than one
+of the interfaces that the object type implements. This also applies across
+source schemas, and when the declarations are `@shareable` and identical. In the
+following counter-example, the stand-ins for `Media` and `Sellable` both project
+`name` onto `Book`.
+
+```graphql counter-example
+# Source Schema A
+interface Media @key(fields: "id") {
+  id: ID!
+}
+
+interface Sellable @key(fields: "id") {
+  id: ID!
+}
+
+type Book implements Media & Sellable @key(fields: "id") {
+  id: ID!
+}
+
+# Source Schema B
+type Media @interfaceObject @key(fields: "id") {
+  id: ID!
+  name: String @shareable
+}
+
+# Source Schema C
+type Sellable @interfaceObject @key(fields: "id") {
+  id: ID!
+  name: String @shareable
 }
 ```
 
@@ -979,14 +1113,12 @@ If multiple source schemas define the same sharable field, they are assumed to
 be semantically equivalent, and the executor is free to choose between them as
 it sees fit.
 
-This also applies when a source schema defines both a stand-in and concrete
-types that implement the corresponding interface in the composite schema. When
-direct declarations and projected implementations overlap, all eligible
-declarations must be shareable and satisfy the field compatibility rules. The
-same applies to implementations projected from multiple interfaces. A concrete
-type or a more-specific interface does not take precedence over other
-implementations. These rules also apply when the declarations are in the same
-source schema.
+This also applies to fields projected from `@interfaceObject` stand-ins. A field
+of an implementing type may have a direct declaration and a projected
+implementation, or implementations projected from stand-ins in several source
+schemas. In either case, all eligible declarations must be `@shareable` and
+satisfy the field compatibility rules. A direct declaration does not take
+precedence over a projected implementation.
 
 In the following example, source schema B provides a projected implementation of
 `taxRate`, while source schema C declares the same field directly on `Chair`.
@@ -1313,9 +1445,10 @@ type Product @key(fields: "id") {
 }
 ```
 
-Composition also rejects cyclic overrides and multiple overrides that target the
-same declaration. The following counter-example has a cycle between `Catalog`
-and `Payments`.
+Composition also rejects more than one `@override` of the same field across
+source schemas, including cyclic overrides and multiple overrides that target
+the same declaration. The following counter-example has a cycle between
+`Catalog` and `Payments`.
 
 ```graphql counter-example
 # The original "Catalog" schema:
@@ -1333,66 +1466,42 @@ type Product @key(fields: "id") {
 }
 ```
 
-The `@override` directive may also be applied to a field on an
-`@interfaceObject` stand-in. It overrides declarations of that field in the
-source schema named by `from` that contribute to the interface and its
-implementations. This includes the matching stand-in field, allowing a projected
-implementation to move from one source schema to another.
+The `@override` directive must not be applied to a field of an
+`@interfaceObject` stand-in. A field projected from a stand-in is also not a
+declaration for the purposes of `@override`, so `@override` on an implementing
+type cannot take it over. To move a field between a stand-in and the types that
+implement its interface, or between stand-ins in different source schemas, mark
+the field `@shareable` in both source schemas while the migration is in
+progress.
 
-A field projected from a stand-in is not itself a declaration for the purposes
-of `@override`. An `@override` on an implementing type therefore replaces only
-a direct declaration on that type in the named source schema. If a direct
-declaration and a projected implementation both apply, they must satisfy the
-`@shareable` and field-compatibility rules.
+In the following counter-example, source schema C tries to take over `rating`
+from the stand-in in source schema B. Source schema B does not declare
+`Book.rating`, so the `@override` has no target. `Book.rating` keeps two
+implementations, the one projected from B and the one declared in C, and neither
+is `@shareable`.
 
-In the following example, the `Catalog` schema originally declares `reviews` on
-the `Media` interface and implements it directly on `Book` and `Movie`. The
-`Reviews` schema takes over by declaring `Media` as a stand-in and overriding
-the field from `Catalog`.
-
-```graphql example
-# The original "Catalog" schema:
+```graphql counter-example
+# Source Schema A
 interface Media @key(fields: "id") {
   id: ID!
-  title: String!
-  reviews: [Review!]!
 }
 
 type Book implements Media @key(fields: "id") {
   id: ID!
-  title: String!
-  author: String!
-  reviews: [Review!]!
 }
 
-type Movie implements Media @key(fields: "id") {
-  id: ID!
-  title: String!
-  director: String!
-  reviews: [Review!]!
-}
-
-type Review {
-  id: ID! @shareable
-  rating: Int! @shareable
-}
-
-# The new "Reviews" schema:
+# Source Schema B
 type Media @interfaceObject @key(fields: "id") {
   id: ID!
-  reviews: [Review!]! @override(from: "Catalog")
+  rating: Int
 }
 
-type Review {
-  id: ID! @shareable
-  rating: Int! @shareable
+# Source Schema C
+type Book @key(fields: "id") {
+  id: ID!
+  rating: Int @override(from: "SchemaB")
 }
 ```
-
-Composition drops `Book.reviews` and `Movie.reviews` from the `Catalog` schema.
-It instead projects `reviews` onto `Media`, and from there onto `Book` and
-`Movie`, using the implementation contributed by the `Reviews` stand-in. The
-composite schema is unchanged; only the source of the field moves.
 
 **Arguments:**
 

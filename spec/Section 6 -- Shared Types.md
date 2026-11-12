@@ -2,14 +2,6 @@
 
 This section defines the scalar types that are shared across this specification.
 
-## Name
-
-```graphql
-scalar Name
-```
-
-The scalar `Name` represents a valid GraphQL type name.
-
 ## FieldSelectionSet
 
 ```graphql

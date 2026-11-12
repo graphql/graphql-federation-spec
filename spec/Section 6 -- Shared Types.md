@@ -1,7 +1,6 @@
 # Shared Types
 
-In this section we outline directives and types that are shared between the
-subgraph configuration and the gateway configuration document.
+This section defines the scalar types that are shared across this specification.
 
 ## Name
 
@@ -107,17 +106,10 @@ scalar FieldSelectionMap
 ```
 
 The scalar `FieldSelectionMap` expresses semantic equivalence between arguments
-of a field and fields within the result type. It is used in the `@is` and
-`@require` directives.
-
-### Introduction
-
-This section focuses on the specification of the {FieldSelectionMap} scalar
-type. {FieldSelectionMap} is designed to express semantic equivalence between
-arguments of a field and fields within the result type. Specifically, it allows
-defining complex relationships between input arguments and fields in the output
-object by encapsulating these relationships within a parsable string format. It
-is used in the `@is` and `@require` directives.
+of a field and fields within the result type. Specifically, it allows defining
+complex relationships between input arguments and fields in the output object by
+encapsulating these relationships within a parsable string format. It is used in
+the `@is` and `@require` directives.
 
 To illustrate, consider a simple example from a GraphQL schema:
 
@@ -174,7 +166,7 @@ type Query {
 }
 ```
 
-#### Scope
+### Scope
 
 The {FieldSelectionMap} scalar type is used to establish semantic equivalence
 between an argument and fields within a specific output type. This output type

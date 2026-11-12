@@ -1111,8 +1111,8 @@ nullable, has a default value, or is annotated with `@require` and therefore
 supplied by the executor. Such a field can be resolved without any arguments
 being supplied. A field that requires an argument cannot be referenced by an
 `@is` selection map, since the map cannot supply one (see
-[Is Invalid Fields](#sec-Is-Invalid-Fields) and the argument validation rules in
-[Shared Types](#sec-Shared-Types).
+[Is Invalid Fields](#sec-Is-Invalid-Fields) and
+[Path Field Argument Validity](#sec-Path-Field-Argument-Validity)).
 
 The same applies to `@key` (see
 [Key Fields Has Arguments](#sec-Key-Fields-Has-Arguments)). `@provides`
@@ -8722,7 +8722,8 @@ ERROR
       directive on {argument}.
     - Let {parsedFieldArg} be the parsed selection map from {fieldArg}.
     - The parsed selection map {parsedFieldArg} must satisfy the validation
-      rules defined in [Shared Types](#sec-Shared-Types), using:
+      rules defined in
+      [FieldSelectionMap Validation](#sec-FieldSelectionMap.Validation), using:
       - {declaringType} as the initial root type.
       - The combined schema context formed by the union of {otherSchemas} as the
         schema context except all fields marked as `@internal`
@@ -8805,7 +8806,8 @@ ERROR
       `@require` directive on {argument}.
     - Let {parsedFieldArg} be the parsed selection map from {fieldArg}.
     - The parsed selection map {parsedFieldArg} must satisfy the validation
-      rules defined in [Shared Types](#sec-Shared-Types), using:
+      rules defined in
+      [FieldSelectionMap Validation](#sec-FieldSelectionMap.Validation), using:
       - {declaringType} as the initial root type.
       - The combined schema context formed by the union of {otherSchemas} as the
         schema context except all fields marked as `@internal`
@@ -9166,7 +9168,8 @@ example, `Media.id` in a stand-in lookup's map selects `Book.id` from a native
 `Book`, and selects the local `Media.id` from an opaque stand-in.
 
 - Let {cases} be the guarded cases represented by {fieldSelectionMap} for
-  {argument}, rooted at {rootType}, according to Appendix A. Retain:
+  {argument}, rooted at {rootType}, according to
+  [FieldSelectionMap](#sec-FieldSelectionMap). Retain:
   - The field paths, including literal arguments, that construct each input
     value and the path prefixes at which type conditions are evaluated.
   - The type conditions governing each alternative and its required paths.
@@ -9747,7 +9750,8 @@ ResolveSelectionCases(state, candidateSchemas, activeGoals):
 - Evaluate every type condition whose runtime identity is known in {state}, and
   discard only alternatives excluded by those conditions.
 - If the complete map result can be constructed from the selected values under
-  an applicable case, with the shape and coercion required by Appendix A:
+  an applicable case, with the shape and coercion required by
+  [FieldSelectionMap](#sec-FieldSelectionMap):
   - Return true.
 - Let {actions} be the following field-selection and type-recovery actions that
   advance a still-applicable or pending case in {state}:

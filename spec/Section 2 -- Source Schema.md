@@ -179,8 +179,10 @@ type Clothing {
 Lookup fields must be accessible from the `Query` type. If a lookup field is not
 defined directly on the `Query` type, it must be reachable by following a chain
 of fields — starting from the `Query` root type — where none of the intermediate
-fields have arguments. This ensures that lookup fields are accessible to the
-executor.
+fields have arguments and each intermediate field returns a single object type
+(not a list, interface, or union). This ensures that lookup fields are
+accessible to the executor (see
+[Lookup Not Reachable](#sec-Lookup-Not-Reachable)).
 
 ```graphql example
 type Query {

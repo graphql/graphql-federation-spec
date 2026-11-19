@@ -2036,6 +2036,166 @@ type Clothing {
 }
 ```
 
+#### Lookup Not Reachable
+
+**Error Code**
+
+`LOOKUP_NOT_REACHABLE`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- Let {lookupPathTypes} be {LookupPathTypes(schema)}.
+- Let {fields} be the set of all field definitions annotated with `@lookup` in
+  {schema}.
+- For each {field} in {fields}:
+  - Let {type} be the type that declares {field}.
+  - {lookupPathTypes} must contain {type}.
+
+LookupPathTypes(schema):
+
+- Let {queryType} be the query root type of {schema}.
+- Let {lookupPathTypes} be an empty set.
+- Let {pending} be a set containing {queryType}.
+- While {pending} is not empty:
+  - Remove a {type} from {pending}.
+  - If {lookupPathTypes} contains {type}:
+    - Continue
+  - Add {type} to {lookupPathTypes}.
+  - For each {field} on {type}:
+    - If {IsLookupPathField(field)} is true:
+      - Add the named type that {field} returns to {pending}.
+- Return {lookupPathTypes}.
+
+IsLookupPathField(field):
+
+- If {field} has arguments:
+  - Return false.
+- Let {type} be the return type of {field}.
+- If {IsListType(type)} is true:
+  - Return false.
+- Let {namedType} be the named type of {type}.
+- If {namedType} is an object type:
+  - Return true.
+- Return false.
+
+**Explanatory Text**
+
+The _distributed GraphQL executor_ must be able to call every lookup field
+without any input other than the lookup field's own arguments. A lookup field
+must therefore be defined on the query root type or on a type reachable from it
+through a _lookup path_: a chain of fields that take no arguments and return a
+single object type. Fields on the path must not take arguments, because the
+executor has no values to supply for them. They must not return lists, because
+the executor needs a single object on which to call the lookup field. They must
+not return interface or union types, because the executor would have to know
+which concrete type to select the lookup field on.
+
+The lookup field itself may return an object, interface, or union type. Only the
+fields leading to it are restricted.
+
+**Examples**
+
+In the following example, the lookup field `productById` is defined on the type
+`ProductLookups`, which is reachable from the query root type through the field
+`productLookups`:
+
+```graphql example
+type Query {
+  productLookups: ProductLookups!
+}
+
+type ProductLookups {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
+In the following counter-example, the field `productLookups` leading to the
+lookup field takes an argument:
+
+```graphql counter-example
+type Query {
+  productLookups(region: String!): ProductLookups!
+}
+
+type ProductLookups {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
+In the following counter-example, the field `productLookups` leading to the
+lookup field returns a list:
+
+```graphql counter-example
+type Query {
+  productLookups: [ProductLookups!]!
+}
+
+type ProductLookups {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
+In the following counter-example, the field `lookups` leading to the lookup
+fields returns an interface type:
+
+```graphql counter-example
+type Query {
+  lookups: Lookups!
+}
+
+interface Lookups {
+  productById(id: ID!): Product @lookup
+}
+
+type ProductLookups implements Lookups {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
+In the following counter-example, the type `ProductLookups` is not reachable
+from the query root type:
+
+```graphql counter-example
+type Query {
+  productById(id: ID!): Product
+}
+
+type ProductLookups {
+  productBySku(sku: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") @key(fields: "sku") {
+  id: ID!
+  sku: ID!
+  name: String
+}
+```
+
 ### Validate Override Directives
 
 #### Override from Self

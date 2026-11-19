@@ -115,22 +115,27 @@ type Product {
 }
 ```
 
-Lookup fields may return object, interface, or union types. In case a lookup
-field returns an abstract type (interface type or union type), all possible
-object types of the abstract return type are considered _entities_, and each
-must have fields that correspond to every argument of the lookup field. When an
-argument is annotated with the `@is` directive, its selection map defines this
-correspondence instead; the selection map must cover every possible object type
-of the return type (see [@is](#sec--is)).
+Lookup fields must return a single object type or interface type (see
+[Lookup Invalid Return Type](#sec-Lookup-Invalid-Return-Type)). In case a lookup
+field returns an interface type, all possible object types of the interface are
+considered _entities_, and each must have fields that correspond to every
+argument of the lookup field. When an argument is annotated with the `@is`
+directive, its selection map defines this correspondence instead; the selection
+map must cover every possible object type of the return type (see
+[@is](#sec--is)).
 
 ```graphql example
 type Query {
   product(id: ID!, categoryId: Int): Product @lookup
 }
 
-union Product = Electronics | Clothing
+interface Product {
+  id: ID!
+  name: String
+  price: Float
+}
 
-type Electronics {
+type Electronics implements Product {
   id: ID!
   categoryId: Int
   name: String
@@ -138,7 +143,7 @@ type Electronics {
   price: Float
 }
 
-type Clothing {
+type Clothing implements Product {
   id: ID!
   categoryId: Int
   name: String
@@ -148,7 +153,7 @@ type Clothing {
 ```
 
 The following example shows an invalid lookup field because the `Clothing` type,
-which is one of the possible object types of the abstract return type, does not
+which is one of the possible object types of the interface return type, does not
 define all the fields required by the lookup field’s arguments.
 
 ```graphql counter-example
@@ -156,9 +161,13 @@ type Query {
   product(id: ID!, categoryId: Int): Product @lookup
 }
 
-union Product = Electronics | Clothing
+interface Product {
+  id: ID!
+  name: String
+  price: Float
+}
 
-type Electronics {
+type Electronics implements Product {
   id: ID!
   categoryId: Int
   name: String
@@ -168,11 +177,32 @@ type Electronics {
 
 # Clothing does not have a field that corresponds
 # with the lookup field's argument signature.
-type Clothing {
+type Clothing implements Product {
   id: ID!
   name: String
   size: String
   price: Float
+}
+```
+
+Lookup fields must not return union types. A union declares no fields, so it
+cannot declare a `@key` and provides no shared _identity_ for its members.
+
+```graphql counter-example
+type Query {
+  product(id: ID!): Product @lookup
+}
+
+union Product = Electronics | Clothing
+
+type Electronics {
+  id: ID!
+  name: String
+}
+
+type Clothing {
+  id: ID!
+  name: String
 }
 ```
 
@@ -452,9 +482,9 @@ input PersonByInput @oneOf {
 }
 ```
 
-When a lookup field returns an abstract type, the selection map must cover every
-possible runtime type of the return type: each possible object type must be
-matched by at least one alternative of the selection map. When a lookup field
+When a lookup field returns an interface type, the selection map must cover
+every possible runtime type of the return type: each possible object type must
+be matched by at least one alternative of the selection map. When a lookup field
 declares multiple arguments, each argument must independently be mappable for
 every possible runtime type. A source schema that can only resolve a subset of
 the possible types must declare a narrower return type that reflects what it can

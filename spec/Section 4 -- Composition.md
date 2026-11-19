@@ -1882,6 +1882,111 @@ type User {
 Here, `usersByIds` returns a list of `User` objects, which violates the
 requirement that a `@lookup` field must return a single object.
 
+#### Lookup Invalid Return Type
+
+**Error Code**
+
+`LOOKUP_INVALID_RETURN_TYPE`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- Let {fields} be the set of all field definitions annotated with `@lookup` in
+  {schema}.
+- For each {field} in {fields}:
+  - Let {namedType} be the named type of the return type of {field}.
+  - {namedType} must be an object type or an interface type.
+
+**Explanatory Text**
+
+Fields annotated with the `@lookup` directive resolve an _entity_ by a _stable
+key_. Their return type must therefore be a type that can be an _entity_: an
+object type or an interface type. Both can declare a `@key` and share the
+_identity_ of the _entity_ across source schemas.
+
+When a lookup field returns an interface type, every possible object type of the
+interface is an _entity_ that the lookup field must be able to resolve by its
+_stable key_. [Lookup Key Missing For Type](#sec-Lookup-Key-Missing-For-Type)
+ensures that every possible object type defines the fields that correspond to
+the arguments of the lookup field.
+
+A union type declares no fields, so it cannot declare a `@key` and provides no
+shared _identity_ for its members. Scalar and enum types are not _entities_.
+Lookup fields must not return any of these types.
+
+**Examples**
+
+In the following example, the lookup field `productById` returns the object type
+`Product`:
+
+```graphql example
+type Query {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
+In the following example, the lookup field `mediaById` returns the interface
+type `Media`. Every possible object type of `Media` can be resolved by `id`:
+
+```graphql example
+type Query {
+  mediaById(id: ID!): Media @lookup
+}
+
+interface Media @key(fields: "id") {
+  id: ID!
+}
+
+type Book implements Media @key(fields: "id") {
+  id: ID!
+  isbn: String!
+}
+
+type Movie implements Media @key(fields: "id") {
+  id: ID!
+  upc: String!
+}
+```
+
+In the following counter-example, the lookup field `mediaById` returns the union
+type `Media`:
+
+```graphql counter-example
+type Query {
+  mediaById(id: ID!): Media @lookup
+}
+
+union Media = Book | Movie
+
+type Book @key(fields: "id") {
+  id: ID!
+  isbn: String!
+}
+
+type Movie @key(fields: "id") {
+  id: ID!
+  upc: String!
+}
+```
+
+In the following counter-example, the lookup field `productName` returns the
+scalar type `String`:
+
+```graphql counter-example
+type Query {
+  productName(id: ID!): String @lookup
+}
+```
+
 #### Lookup Key Missing For Type
 
 **Error Code**
@@ -2022,15 +2127,18 @@ type Query {
   product(id: ID!, categoryId: Int): Product @lookup
 }
 
-union Product = Electronics | Clothing
+interface Product {
+  id: ID!
+  name: String
+}
 
-type Electronics {
+type Electronics implements Product {
   id: ID!
   categoryId: Int
   name: String
 }
 
-type Clothing {
+type Clothing implements Product {
   id: ID!
   name: String
 }
@@ -9108,7 +9216,7 @@ names; source-local and composite type definitions are distinct objects.
     where {localObjectType} has the name of {objectType} in {targetSchema}.
 - If {targetType} does not have the name of {valueType}:
   - Return an empty set.
-- If {returnType} has the name of {valueType}, or is an interface or union whose
+- If {returnType} has the name of {valueType}, or is an interface whose
   source-local possible types contain {valueType}:
   - Return the set containing ({targetSchema}, {targetType}, {valueType}).
 - Return an empty set.

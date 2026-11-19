@@ -215,7 +215,7 @@ client-facing composite schema.
 # Source Schema
 type Query {
   productById(id: ID!): Product
-  productBySku(sku: ID!): Product @internal
+  productBySku(sku: ID!): Product @lookup @internal
 }
 
 # Composite Schema
@@ -235,13 +235,13 @@ type Query {
   productById(id: ID!): Product
 
   # this field is internal and does not follow any field merging rules.
-  productBySku(sku: ID!): Product @internal
+  productBySku(sku: ID!): Product @lookup @internal
 }
 
 # Source Schema B
 type Query {
   productById(id: ID!): Product
-  productBySku(sku: ID!, name: String!): Product @internal
+  productBySku(sku: ID!, name: String!): Product @lookup @internal
 }
 
 # Composite Schema
@@ -272,9 +272,12 @@ type Query {
 }
 ```
 
-Since internal fields are not part of the standard schema-merging process, they
-cannot be used as key fields or in requirements. This is because there is no
-semantic equivalence of the field or type to another source schema.
+The `@internal` directive may only be applied to lookup fields, to fields on the
+path from the `Query` type to nested lookup fields, and to types that contain
+only such fields (see [Internal Invalid Usage](#sec-Internal-Invalid-Usage)). In
+particular, since internal fields are not part of the standard schema-merging
+process, they cannot be used as key fields or in requirements. This is because
+there is no semantic equivalence of the field or type to another source schema.
 
 ```graphql counter-example
 type Query {
@@ -296,7 +299,7 @@ type Query {
   productById(id: ID!): Product
 
   # this field is internal and does not follow any field merging rules.
-  productBySku(sku: ID!): Product @internal
+  productBySku(sku: ID!): Product @lookup @internal
 }
 
 # Source Schema B
@@ -309,7 +312,7 @@ type Query {
 }
 
 # Composite Schema
-type Product {
+type Query {
   productById(id: ID!): Product
   productBySku(sku: Int!): Product
 }

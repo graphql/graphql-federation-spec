@@ -2095,9 +2095,6 @@ the executor needs a single object on which to call the lookup field. They must
 not return interface or union types, because the executor would have to know
 which concrete type to select the lookup field on.
 
-The lookup field itself may return an object, interface, or union type. Only the
-fields leading to it are restricted.
-
 **Examples**
 
 In the following example, the lookup field `productById` is defined on the type

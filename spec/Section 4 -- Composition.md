@@ -533,6 +533,188 @@ An `@internal` declaration does not participate in composition, while an
 `@override` declaration transfers a composed field from another source schema.
 The directives are therefore mutually exclusive.
 
+#### Internal Invalid Usage
+
+**Error Code**
+
+`INTERNAL_INVALID_USAGE`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- Let {lookupPathTypes} be {LookupPathTypes(schema)}.
+- Let {compositeTypes} be the set of all object and interface types in {schema}.
+- For each {type} in {compositeTypes}:
+  - For each {field} on {type}:
+    - If neither {type} nor {field} is annotated with `@internal`:
+      - Continue
+    - If {field} is annotated with `@lookup`:
+      - Continue
+    - {lookupPathTypes} must contain {type}.
+    - {IsLookupPathField(field)} must be true.
+    - Let {fieldType} be the named type that {field} returns.
+    - {IsInternalType(fieldType)} must be true.
+
+IsInternalType(type):
+
+- If {type} is annotated with `@internal`:
+  - Return true.
+- For each {field} on {type}:
+  - If {field} is **not** annotated with `@internal`:
+    - Return false.
+- Return true.
+
+**Explanatory Text**
+
+The `@internal` directive hides lookup fields that a source schema provides for
+_entity_ resolution but that should not be accessible through the client-facing
+composite schema. It may therefore only be applied to lookup fields and along
+the _lookup path_ leading to them (see
+[Lookup Not Reachable](#sec-Lookup-Not-Reachable)):
+
+- Any lookup field may be annotated with `@internal`, whether it is a field of
+  the query root type or a nested lookup field.
+- Any other internal field must be a field on the lookup path, and every field
+  of the type it returns must be internal as well. Annotating a type with
+  `@internal` is shorthand for annotating each of its fields with `@internal`.
+  Once a field on the lookup path is internal, everything beneath it must be
+  internal too.
+
+Applying `@internal` anywhere else is invalid. In particular, `@internal` must
+not be applied to _entity_ types, to fields that are used as keys or
+requirements, or to fields of mutation or subscription root types.
+
+**Examples**
+
+In the following example, `@internal` is applied to a lookup field of the query
+root type, satisfying the rule:
+
+```graphql example
+type Query {
+  productById(id: ID!): Product @lookup
+  productBySku(sku: ID!): Product @lookup @internal
+}
+
+type Product @key(fields: "id") @key(fields: "sku") {
+  id: ID!
+  sku: ID!
+  name: String
+}
+```
+
+Nested lookup fields may be internal as well. In the following example, the type
+`ProductLookups` holds a public and an internal lookup field, so it remains part
+of the composite schema with only the public lookup field:
+
+```graphql example
+type Query {
+  productLookups: ProductLookups!
+}
+
+type ProductLookups {
+  productById(id: ID!): Product @lookup
+  productBySku(sku: ID!): Product @lookup @internal
+}
+
+type Product @key(fields: "id") @key(fields: "sku") {
+  id: ID!
+  sku: ID!
+  name: String
+}
+```
+
+In the following example, the field `lookups` leading to nested lookup fields is
+annotated with `@internal`, and so is the type `InternalLookups` it returns:
+
+```graphql example
+type Query {
+  productById(id: ID!): Product @lookup
+  lookups: InternalLookups! @internal
+}
+
+type InternalLookups @internal {
+  productBySku(sku: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") @key(fields: "sku") {
+  id: ID!
+  sku: ID!
+  name: String
+}
+```
+
+In the following counter-example, `@internal` is applied to a field of an
+_entity_ type, which is not a lookup field:
+
+```graphql counter-example
+type Query {
+  productById(id: ID!): Product @lookup
+}
+
+type Product {
+  id: ID! @internal
+  name: String
+}
+```
+
+In the following counter-example, the type `Product` is annotated with
+`@internal`, but it is not on a lookup path:
+
+```graphql counter-example
+type Query {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") @internal {
+  id: ID!
+  price: Int
+}
+```
+
+In the following counter-example, the field `lookups` is annotated with
+`@internal`, but the type `Lookups` it returns is not:
+
+```graphql counter-example
+type Query {
+  productById(id: ID!): Product @lookup
+  lookups: Lookups! @internal
+}
+
+type Lookups {
+  productBySku(sku: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") @key(fields: "sku") {
+  id: ID!
+  sku: ID!
+  name: String
+}
+```
+
+In the following counter-example, the internal type `InternalLookups` declares
+the field `product`, which is neither a lookup field nor a field on the lookup
+path:
+
+```graphql counter-example
+type Query {
+  productById(id: ID!): Product @lookup
+  lookups: InternalLookups! @internal
+}
+
+type InternalLookups @internal {
+  product(id: ID!): Product
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
 ### Validate External Directives
 
 #### External Unused
@@ -2032,6 +2214,163 @@ type Electronics {
 
 type Clothing {
   id: ID!
+  name: String
+}
+```
+
+#### Lookup Not Reachable
+
+**Error Code**
+
+`LOOKUP_NOT_REACHABLE`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- Let {lookupPathTypes} be {LookupPathTypes(schema)}.
+- Let {fields} be the set of all field definitions annotated with `@lookup` in
+  {schema}.
+- For each {field} in {fields}:
+  - Let {type} be the type that declares {field}.
+  - {lookupPathTypes} must contain {type}.
+
+LookupPathTypes(schema):
+
+- Let {queryType} be the query root type of {schema}.
+- Let {lookupPathTypes} be an empty set.
+- Let {pending} be a set containing {queryType}.
+- While {pending} is not empty:
+  - Remove a {type} from {pending}.
+  - If {lookupPathTypes} contains {type}:
+    - Continue
+  - Add {type} to {lookupPathTypes}.
+  - For each {field} on {type}:
+    - If {IsLookupPathField(field)} is true:
+      - Add the named type that {field} returns to {pending}.
+- Return {lookupPathTypes}.
+
+IsLookupPathField(field):
+
+- If {field} has arguments:
+  - Return false.
+- Let {type} be the return type of {field}.
+- If {IsListType(type)} is true:
+  - Return false.
+- Let {namedType} be the named type of {type}.
+- If {namedType} is an object type:
+  - Return true.
+- Return false.
+
+**Explanatory Text**
+
+The _distributed GraphQL executor_ must be able to call every lookup field
+without any input other than the lookup field's own arguments. A lookup field
+must therefore be defined on the query root type or on a type reachable from it
+through a _lookup path_: a chain of fields that take no arguments and return a
+single object type. Fields on the path must not take arguments, because the
+executor has no values to supply for them. They must not return lists, because
+the executor needs a single object on which to call the lookup field. They must
+not return interface or union types, because the executor would have to know
+which concrete type to select the lookup field on.
+
+**Examples**
+
+In the following example, the lookup field `productById` is defined on the type
+`ProductLookups`, which is reachable from the query root type through the field
+`productLookups`:
+
+```graphql example
+type Query {
+  productLookups: ProductLookups!
+}
+
+type ProductLookups {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
+In the following counter-example, the field `productLookups` leading to the
+lookup field takes an argument:
+
+```graphql counter-example
+type Query {
+  productLookups(region: String!): ProductLookups!
+}
+
+type ProductLookups {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
+In the following counter-example, the field `productLookups` leading to the
+lookup field returns a list:
+
+```graphql counter-example
+type Query {
+  productLookups: [ProductLookups!]!
+}
+
+type ProductLookups {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
+In the following counter-example, the field `lookups` leading to the lookup
+fields returns an interface type:
+
+```graphql counter-example
+type Query {
+  lookups: Lookups!
+}
+
+interface Lookups {
+  productById(id: ID!): Product @lookup
+}
+
+type ProductLookups implements Lookups {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
+In the following counter-example, the type `ProductLookups` is not reachable
+from the query root type:
+
+```graphql counter-example
+type Query {
+  productById(id: ID!): Product
+}
+
+type ProductLookups {
+  productBySku(sku: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") @key(fields: "sku") {
+  id: ID!
+  sku: ID!
   name: String
 }
 ```
@@ -5779,32 +6118,6 @@ type Order {
 In this case, the description from the first schema is retained, while the
 fields are merged from both schemas to create the final `Order` type.
 
-In the following example, one of the `Product` types is marked with `@internal`.
-All its fields are excluded from the composed type.
-
-```graphql example
-# Schema A
-
-type Product @key(fields: "id") {
-  id: ID!
-  name: String
-}
-
-# Schema B
-
-type Product @key(fields: "id") @internal {
-  id: ID!
-  price: Int
-}
-
-# Composed Result
-
-type Product {
-  id: ID!
-  name: String
-}
-```
-
 ### Merge Interface Implementations
 
 **Formal Specification**
@@ -6088,14 +6401,13 @@ ContractFieldDeclarations(interface, schemas):
 
 - Let {interfaceName} be the name of {interface}.
 - Return the set of all fields declared on interface types named {interfaceName}
-  or on stand-ins for {interface} across {schemas}, excluding types marked with
-  `@internal` and fields marked with `@internal`.
+  or on stand-ins for {interface} across {schemas}, excluding fields marked with
+  `@internal`.
 
 MergeContractFields(interface, schemas):
 
 - Let {types} be the interface types named the name of {interface} and the
-  stand-ins for {interface} across {schemas}, excluding types marked with
-  `@internal`.
+  stand-ins for {interface} across {schemas}.
 - If any type in {types} is marked with `@inaccessible`:
   - Return an empty set.
 - Let {declarations} be the result of {ContractFieldDeclarations(interface,
@@ -6228,13 +6540,13 @@ applicable projected declaration must satisfy the sharing rule together.
 _Extending Interface Contracts_
 
 Stand-in fields merge with same-named real interface fields using
-{MergeOutputFields(fields)}. Internal stand-in types and internal fields do not
-participate. An inaccessible contract field remains absent and contributes no
-projected implementation. An inaccessible interface has no contract fields, so
-its stand-ins contribute nothing. External fields may describe a contract but
-supply no unconditional implementation. A field selected by a stand-in's `@key`
-participates in the contract but supplies no projected implementation either.
-These exclusions apply to each source declaration separately.
+{MergeOutputFields(fields)}. Internal fields do not participate. An inaccessible
+contract field remains absent and contributes no projected implementation. An
+inaccessible interface has no contract fields, so its stand-ins contribute
+nothing. External fields may describe a contract but supply no unconditional
+implementation. A field selected by a stand-in's `@key` participates in the
+contract but supplies no projected implementation either. These exclusions apply
+to each source declaration separately.
 
 Arguments annotated with `@require` are excluded from the composed field by
 {MergeOutputFields(fields)}. The distributed executor supplies those arguments.
@@ -7330,39 +7642,39 @@ intended for internal use.
 A valid case where a public field references another public type:
 
 ```graphql example
-type Object1 {
-  field1: String!
-  field2: Object2
+type Query {
+  productById(id: ID!): Product @lookup
+  lookups: Lookups!
 }
 
-type Object2 {
-  field3: String
+type Lookups {
+  productBySku(sku: ID!): Product @lookup
 }
 ```
 
 Another valid case is where the field is internal in the source schema:
 
 ```graphql example
-type Object1 {
-  field1: String!
-  field2: Object2 @internal
+type Query {
+  productById(id: ID!): Product @lookup
+  lookups: InternalLookups! @internal
 }
 
-type Object2 @internal {
-  field3: String
+type InternalLookups @internal {
+  productBySku(sku: ID!): Product @lookup
 }
 ```
 
 An invalid case is when a field references an internal type:
 
 ```graphql counter-example
-type Object1 {
-  field1: String!
-  field2: Object2!
+type Query {
+  productById(id: ID!): Product @lookup
+  lookups: InternalLookups!
 }
 
-type Object2 @internal {
-  field3: String
+type InternalLookups @internal {
+  productBySku(sku: ID!): Product @lookup
 }
 ```
 
@@ -9192,7 +9504,7 @@ from another context.
 - For each {context} in {contexts}:
   - Let {sourceSchema} and {localType} be its source schema and local parent.
   - If {sourceSchema} is not in {candidateSchemas}, or {localType} is not a
-    stand-in, or {localType} is annotated with `@internal`:
+    stand-in:
     - Continue to the next {context}.
   - If {field} is selected by a `@key` on {localType}, its local declaration is
     not annotated with `@external` or `@internal`:

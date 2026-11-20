@@ -199,7 +199,7 @@ type Product {
 ## @internal
 
 ```graphql
-directive @internal on OBJECT | FIELD_DEFINITION
+directive @internal on OBJECT | INPUT_OBJECT | FIELD_DEFINITION
 ```
 
 The `@internal` directive is used in combination with lookup fields and allows
@@ -281,6 +281,68 @@ type Query {
 
 type Product {
   id: ID! @internal
+}
+```
+
+Input object types can also be declared as internal. An internal input object
+type is local to its source schema: it is not merged with input object types of
+the same name in other source schemas and does not appear in the composite
+schema. Internal input object types may only be referenced by arguments
+annotated with `@require`, by arguments of internal fields, and by fields of
+other internal input object types.
+
+```graphql example
+# Source Schema A
+type Product {
+  id: ID!
+  delivery(
+    zip: String!
+    dimension: Dimension! @require(field: "{ height, width }")
+  ): DeliveryEstimates
+}
+
+# this input type is only used to express requirements
+input Dimension @internal {
+  height: Int!
+  width: Int!
+}
+
+# Source Schema B
+type Query {
+  boxes(dimension: Dimension): [Box]
+}
+
+# this input type follows the standard input type merging rules
+input Dimension {
+  size: Int!
+}
+
+# Composite Schema
+type Product {
+  id: ID!
+  delivery(zip: String!): DeliveryEstimates
+}
+
+type Query {
+  boxes(dimension: Dimension): [Box]
+}
+
+input Dimension {
+  size: Int!
+}
+```
+
+The same applies to input object types used by internal lookup fields.
+
+```graphql example
+type Query {
+  productById(id: ID!): Product @lookup
+  productByKey(key: ProductKey!): Product @lookup @internal
+}
+
+input ProductKey @internal {
+  sku: String!
+  upc: String!
 }
 ```
 
@@ -572,9 +634,10 @@ type Product {
 ```
 
 This can also be done by using input types. The selection path map specifies
-which data is required and needs to be resolved from other source schemas. If
-the input type is only used to express requirements it is removed from the
-composite schema.
+which data is required and needs to be resolved from other source schemas. Input
+types that are only used to express requirements should be annotated with
+`@internal`, which keeps them local to the source schema and removes them from
+the composite schema.
 
 ```graphql example
 type Product {
@@ -607,7 +670,7 @@ type ProductDimension {
   weight: Int!
 }
 
-input ProductDimensionInput {
+input ProductDimensionInput @internal {
   productSize: Int!
   productWeight: Int!
 }

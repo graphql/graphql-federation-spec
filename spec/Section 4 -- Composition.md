@@ -533,6 +533,119 @@ An `@internal` declaration does not participate in composition, while an
 `@override` declaration transfers a composed field from another source schema.
 The directives are therefore mutually exclusive.
 
+#### Internal Input Type Referenced Publicly
+
+**Error Code**
+
+`INTERNAL_INPUT_TYPE_REFERENCED_PUBLICLY`
+
+**Severity**
+
+ERROR
+
+**Formal Specification**
+
+- Let {schema} be the source schema to validate.
+- Let {internalInputTypes} be the set of all input object types in {schema}
+  annotated with `@internal`.
+- For each object or interface type {type} in {schema}:
+  - For each {field} on {type}:
+    - For each {argument} on {field}:
+      - Let {namedType} be the named type that {argument} references.
+      - If {namedType} is in {internalInputTypes}:
+        - {IsInternalReferenceAllowed(type, field, argument)} must be {true}.
+- For each input object type {inputType} in {schema}:
+  - If {inputType} is not in {internalInputTypes}:
+    - For each {inputField} on {inputType}:
+      - Let {namedType} be the named type that {inputField} references.
+      - {namedType} must not be in {internalInputTypes}.
+
+IsInternalReferenceAllowed(type, field, argument):
+
+- If {argument} is annotated with `@require`:
+  - Return {true}.
+- If {field} is annotated with `@internal`:
+  - Return {true}.
+- If {type} is annotated with `@internal`:
+  - Return {true}.
+- Return {false}.
+
+**Explanatory Text**
+
+An internal input object type is local to its source schema and does not appear
+in the composite schema. It may therefore only be referenced from places that
+are themselves removed from the composite schema:
+
+- arguments annotated with `@require`, whose values are supplied by the
+  _distributed GraphQL executor_,
+- arguments of internal fields, or of fields on internal types,
+- input fields of other internal input object types.
+
+Any other reference would expose a type that does not exist in the composite
+schema.
+
+In the following example, the internal input type `Dimension` is only used by an
+argument annotated with `@require`, and the internal input type `ProductKey` is
+only used by an internal lookup field. This is valid.
+
+```graphql example
+type Query {
+  productById(id: ID!): Product @lookup
+  productByKey(key: ProductKey!): Product @lookup @internal
+}
+
+type Product {
+  id: ID!
+  delivery(
+    zip: String!
+    dimension: Dimension! @require(field: "{ height, width }")
+  ): DeliveryEstimates
+}
+
+input Dimension @internal {
+  height: Int!
+  width: Int!
+}
+
+input ProductKey @internal {
+  sku: String!
+  upc: String!
+}
+```
+
+In the following counter-example, the internal input type `Dimension` is used by
+the argument `dimension` of the public field `boxes`. This violates the rule.
+
+```graphql counter-example
+type Query {
+  boxes(dimension: Dimension): [Box]
+}
+
+input Dimension @internal {
+  height: Int!
+  width: Int!
+}
+```
+
+In the following counter-example, the internal input type `Dimension` is
+referenced by the input field `dimension` of the public input type `BoxFilter`.
+This violates the rule.
+
+```graphql counter-example
+type Query {
+  boxes(filter: BoxFilter): [Box]
+}
+
+input BoxFilter {
+  dimension: Dimension
+}
+
+input Dimension @internal {
+  height: Int!
+  width: Int!
+}
+```
+
 ### Validate External Directives
 
 #### External Unused
@@ -3815,7 +3928,7 @@ type Review {
 
 - Let {inputFieldsByName} be a map where the key is the name of an input field
   and the value is a list of input fields from different source schemas from the
-  same type with the same name.
+  same type with the same name, excluding input types declared as `@internal`.
 - For each {inputFields} in {inputFieldsByName}:
   - Let {defaultValues} be a set containing the default values of each input
     field in {inputFields}.
@@ -3922,7 +4035,8 @@ input BookFilter {
 
 - Let {fieldsByName} be a map of field lists where the key is the name of a
   field and the value is a list of fields from mergeable input types from
-  different source schemas with the same name.
+  different source schemas with the same name, excluding input types declared as
+  `@internal`.
 - For each {fields} in {fieldsByName}:
   - {InputFieldsAreMergeable(fields)} must be true.
 
@@ -4004,7 +4118,7 @@ ERROR
   schemas that are not declared as `@inaccessible`.
 - For each {typeName} in {typeNames}:
   - Let {types} be the list of all input object types from different source
-    schemas with the name {typeName}.
+    schemas with the name {typeName} that are not declared as `@internal`.
   - {AreTypesConsistent(types)} must be true.
 
 AreTypesConsistent(inputs):
@@ -5515,6 +5629,9 @@ MergeInputTypes(types):
 
 - If any {type} in {types} is marked with `@inaccessible`
   - Return {null}
+- Remove all types marked with `@internal` from {types}.
+- If {types} is empty:
+  - Return {null}
 - Let {firstType} be the first type in {types}.
 - Let {typeName} be the name of {firstType}.
 - Let {description} be the description of {firstType}.
@@ -5551,6 +5668,14 @@ _Inaccessible Types_
 If an input type is annotated with `@inaccessible`, the algorithm immediately
 returns `null`. Including an inaccessible type would mean exposing a field
 that's not allowed in the composed schema.
+
+_Internal Types_
+
+Any input type marked with `@internal` is removed from consideration before
+merging begins. Internal input types are local to their source schema, so they
+neither contribute fields to nor constrain an input type of the same name in
+another source schema. If every input type with a given name is internal, the
+algorithm returns `null` and the type does not appear in the composed schema.
 
 _Combining Descriptions_
 

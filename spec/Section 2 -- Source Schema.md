@@ -179,8 +179,10 @@ type Clothing {
 Lookup fields must be accessible from the `Query` type. If a lookup field is not
 defined directly on the `Query` type, it must be reachable by following a chain
 of fields — starting from the `Query` root type — where none of the intermediate
-fields have arguments. This ensures that lookup fields are accessible to the
-executor.
+fields have arguments and each intermediate field returns a single object type
+(not a list, interface, or union). This ensures that lookup fields are
+accessible to the executor (see
+[Lookup Not Reachable](#sec-Lookup-Not-Reachable)).
 
 ```graphql example
 type Query {
@@ -195,6 +197,12 @@ type Product {
   id: ID!
 }
 ```
+
+`@lookup` must be applied only to fields of object types. A field of an
+interface type cannot be a lookup field, because the _distributed GraphQL
+executor_ calls a lookup field on a concrete object type. An object type that
+implements an interface does not inherit `@lookup` from the interface's field:
+the implementing field is a lookup field only if it is annotated itself.
 
 ## @internal
 

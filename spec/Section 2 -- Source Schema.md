@@ -198,6 +198,12 @@ type Product {
 }
 ```
 
+`@lookup` must be applied only to fields of object types. A field of an
+interface type cannot be a lookup field, because the _distributed GraphQL
+executor_ calls a lookup field on a concrete object type. An object type that
+implements an interface does not inherit `@lookup` from the interface's field:
+the implementing field is a lookup field only if it is annotated itself.
+
 ## @internal
 
 ```graphql

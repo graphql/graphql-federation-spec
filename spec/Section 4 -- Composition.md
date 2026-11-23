@@ -2054,6 +2054,7 @@ ERROR
   {schema}.
 - For each {field} in {fields}:
   - Let {type} be the type that declares {field}.
+  - {type} must be an object type.
   - {lookupPathTypes} must contain {type}.
 
 LookupPathTypes(schema):
@@ -2094,6 +2095,11 @@ executor has no values to supply for them. They must not return lists, because
 the executor needs a single object on which to call the lookup field. They must
 not return interface or union types, because the executor would have to know
 which concrete type to select the lookup field on.
+
+A lookup field must also be declared by an object type. `@lookup` on a field of
+an interface type is an error, even if an implementing object type declares the
+same field with `@lookup`, because the executor calls a lookup field on a
+concrete object type.
 
 **Examples**
 
@@ -2158,6 +2164,30 @@ fields returns an interface type:
 ```graphql counter-example
 type Query {
   lookups: Lookups!
+}
+
+interface Lookups {
+  productById(id: ID!): Product @lookup
+}
+
+type ProductLookups implements Lookups {
+  productById(id: ID!): Product @lookup
+}
+
+type Product @key(fields: "id") {
+  id: ID!
+  name: String
+}
+```
+
+In the following counter-example, the lookup field `productById` is declared by
+the interface type `Lookups`. The implementing type `ProductLookups` is
+reachable from the query root type and declares its own lookup field, so the
+`@lookup` annotation on the interface field is the only error:
+
+```graphql counter-example
+type Query {
+  productLookups: ProductLookups!
 }
 
 interface Lookups {
